@@ -1,32 +1,38 @@
 import esbuild from "esbuild";
 import fs from "fs";
-import { join } from "path";
+import { isAbsolute, join } from "path";
+import { promisify } from 'util'
+import resolve, { AsyncOpts } from "resolve";
 
+type resolveCallback = (err: Error | null, resolved?: string) => void;
+type ResolveFn = (id: string, opts: AsyncOpts, cb: resolveCallback) => string
+
+const asyncResolve = promisify(resolve as unknown as ResolveFn);
 const readFile = fs.promises.readFile;
 
-const CSSPlugin: esbuild.Plugin = {
-    name: "cssextract",
-    setup(build) {
-        build.onResolve({ filter: /\.css$/ }, ({ path })  => {
-            if (require.resolve(path) === path) {
+function CSSPlugin(this: esbuild.Plugin, publicPath: string = "/") {
+    this.name = "cssextract";
+    this.setup = function(build) {
+        build.onResolve({ filter: /\.css$/ }, async ({ path, resolveDir })  => {
+            if (isAbsolute(path)) {
                 return {
                     path,
-                    namespace: "css-file"
+                    namespace: "css-file",
                 };
             } else {
-                const cssPath = require.resolve(path);
+                const resolvedPath = await asyncResolve(path, { basedir: resolveDir });
                 return {
-                    path: cssPath,
+                    path: resolvedPath,
                     namespace: "css-external"
                 }
             }
-        })
+        });
 
         build.onLoad({ filter: /\.css$/, namespace: "css-external" }, ({ path }) => {
             return {
                 contents: `
                     import loadCss from "${join(__dirname, "loader.js")}"
-                    import cssPath from "${path}";
+                    import cssPath from "${publicPath}${path}";
                     loadCss(cssPath);
                 `,
                 resolveDir: process.cwd(),
@@ -40,6 +46,6 @@ const CSSPlugin: esbuild.Plugin = {
             }
         });
     }
-}
+};
 
 export default CSSPlugin;
